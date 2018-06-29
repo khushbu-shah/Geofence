@@ -1,3 +1,6 @@
-  <!--Geofence :: Region Detection Service-->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  
+
+<!--Geofence :: Region Detection Service-->
 
         <service android:name=".geofence.GeofenceTransitionsIntentService" />
