@@ -1,0 +1,270 @@
+package com.softweb.smartoffice.activity;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.content.res.TypedArray;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.os.Build;
+import android.os.Bundle;
+import android.support.annotation.StringRes;
+import android.support.design.widget.CoordinatorLayout;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
+import android.support.v4.view.GravityCompat;
+import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.ActionBarDrawerToggle;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.support.v7.widget.Toolbar;
+import android.util.Log;
+import android.view.View;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
+import com.estimote.coresdk.common.requirements.SystemRequirementsChecker;
+import com.estimote.proximity_sdk.proximity.EstimoteCloudCredentials;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.common.api.Status;
+import com.google.android.gms.location.Geofence;
+import com.google.android.gms.location.GeofencingRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.model.LatLng;
+
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
+
+import java.util.ArrayList;
+import java.util.Map;
+
+import butterknife.BindView;
+import butterknife.ButterKnife;
+
+public class HomeActivity extends BaseActivity implements CallWebServices.WebServiceResponseListener ,  GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener,
+        ResultCallback<Status>
+{
+    private static final String TAG = HomeActivity.class.getSimpleName();
+
+    // Giofence Declaration
+    private GoogleApiClient googleApiClient;
+    private ArrayList<Geofence> geofenceArrayList = new ArrayList<>();
+    private PendingIntent geofencePendingIntent;
+    private MyReceiver myReceiver;
+
+
+    @Override
+    protected void onCreate( Bundle savedInstanceState )
+    {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_home);
+                
+        startGeofence();
+    }
+
+    /**
+     * for Start Geofence
+     */
+    private void startGeofence() {
+
+        populateGeoFenceList();
+
+    }
+
+    /***********************************************************************************************
+     * This sample hard codes geofence data. A real app might dynamically create geofences based on
+     * the user's location.
+     **********************************************************************************************/
+    public void populateGeoFenceList()
+    {
+        for (Map.Entry<String, LatLng> entry : Constants.GEOFENCE_REGION.entrySet())
+        {
+            geofenceArrayList.add(new Geofence.Builder()
+                    .setRequestId(entry.getKey())
+                    .setCircularRegion(entry.getValue().latitude, entry.getValue().longitude, Constants.GEOFENCE_RADIUS_IN_METERS)
+                    .setExpirationDuration(Constants.GEOFENCE_EXPIRATION_IN_MILLISECONDS)
+                    .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER | Geofence.GEOFENCE_TRANSITION_EXIT)
+                    .build());
+            Log.d(TAG, "Geofence location :: " + entry.getKey() + "," + entry.getValue().latitude + "," + entry.getValue().longitude);
+        }
+        startGeoFenceListener();
+    }//end of populateGeoFenceList()
+
+    /***********************************************************************************************
+     * Adds geofences, which sets alerts to be notified when the device enters or exits one of the
+     * specified geofences. Handles the success or failure results returned by addGeofences().
+     ***********************************************************************************************/
+    public void addGeofencesButtonHandler()
+    {
+        if (!googleApiClient.isConnected())
+        {
+            Toast.makeText(this, "Client not connected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try
+        {
+            LocationServices.GeofencingApi.addGeofences(googleApiClient,
+                    // The GeofenceRequest object.
+                    getGeofencingRequest(),
+                    // A pending intent that that is reused when calling removeGeofences(). This
+                    // pending intent is used to generate an intent when a matched geofence
+                    // transition is observed.
+                    getGeofencePendingIntent()
+            ).setResultCallback(this); // Result processed in onResult().
+        } catch (SecurityException securityException)
+        {
+            // Catch exception generated if the app does not use ACCESS_FINE_LOCATION permission.
+            logSecurityException(securityException);
+        }
+    }//end of addGeofencesButtonHandler()
+
+    /************************************************************************************************
+     * @param securityException
+     ***********************************************************************************************/
+    private void logSecurityException(SecurityException securityException)
+    {
+        Log.e(TAG, "Invalid location permission. " +
+                "You need to use ACCESS_FINE_LOCATION with geofences", securityException);
+    }//end of logSecurityException()
+
+    /***********************************************************************************************
+     * Builds and returns a GeofencingRequest. Specifies the list of geofences to be monitored.
+     * Also specifies how the geofence notifications are initially triggered.
+     ***********************************************************************************************/
+    private GeofencingRequest getGeofencingRequest()
+    {
+        GeofencingRequest.Builder builder = new GeofencingRequest.Builder();
+        builder.setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER);
+        builder.addGeofences(geofenceArrayList);
+        return builder.build();
+    }//end oc GeofencingRequest()
+
+    /***********************************************************************************************
+     * Gets a PendingIntent to send with the request to add or remove Geofences. Location Services
+     * issues the Intent inside this PendingIntent whenever a geofence transition occurs for the
+     * current list of geofences.
+     *
+     * @return A PendingIntent for the IntentService that handles geofence transitions.
+     ***********************************************************************************************/
+    private PendingIntent getGeofencePendingIntent()
+    {
+
+        if (geofencePendingIntent != null)
+        {
+            return geofencePendingIntent;
+        }
+        Intent intent = new Intent(this, GeofenceTransitionsIntentService.class);
+        myReceiver = new MyReceiver();
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(GeofenceTransitionsIntentService.ACTION);    // set this final so it will remain same from both sides this is key for send broadcast
+        registerReceiver(myReceiver, intentFilter);
+
+        return PendingIntent.getService(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+    }//end of PendingIntent()
+
+
+    /**
+     * request for starting geofence service
+     */
+    private void startGeoFenceListener()
+    {
+        googleApiClient = new GoogleApiClient.Builder(this)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .addApi(LocationServices.API)
+                .build();
+        googleApiClient.connect();
+
+    }   // end of startGeoFenceListener
+
+    private class MyReceiver extends BroadcastReceiver
+    {
+
+        @Override
+        public void onReceive(Context arg0, Intent intent)
+        {
+
+            if (intent.getAction().equalsIgnoreCase(GeofenceTransitionsIntentService.ACTION))
+            {
+                Toast.makeText(arg0, "Geofence event " +
+                            intent.getStringExtra("EVENT")
+                            + intent.getStringExtra("REGION_NAME") + "\n"
+                            + intent.getStringExtra("TIME")
+                    , Toast.LENGTH_SHORT).show();
+            }
+
+        }
+    }
+
+    /************************************************************
+     * onConnected()
+     *
+     * @param bundle
+     ***********************************************************/
+    @Override
+    public void onConnected(Bundle bundle)
+    {
+        Log.d(TAG, "onConnected :: Connected to GoogleApiClient");
+
+        addGeofencesButtonHandler();
+
+    }//end of onConnected
+
+    /***********************************************************
+     * onConnectionSuspended()
+     *
+     * @param cause
+     ************************************************************/
+    @Override
+    public void onConnectionSuspended(int cause)
+    {
+        // The connection to Google Play services was lost for some reason.
+        Log.d(TAG, "Connection suspended"); // onConnected() will be called again automatically when the service reconnects
+    }//end of onConnectionSuspended
+
+    /***********************************************************************************************
+     * onConnectionFailed()
+     *
+     * @param connectionResult
+     ***********************************************************************************************/
+    @Override
+    public void onConnectionFailed(ConnectionResult connectionResult)
+    {
+
+        Log.d(TAG, "Connection failed :: ConnectionResult.getErrorCode() = " + connectionResult.getErrorCode());
+    }//end of onConnectionFailed()
+
+    @Override
+    public void onResult(Status status)
+    {
+        if (status.isSuccess())
+        {
+        } else
+        {
+            String errorMessage = GeofenceErrorMessages.getErrorString(this, status.getStatusCode());
+            Log.e(TAG, errorMessage);
+        }
+
+    }//end of onResult()
+
+    @Override
+    protected void onResume()
+    {
+        super.onResume();
+        startGeofence();
+    }
+}
